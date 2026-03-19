@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is simple file watcher lib written in go with an exposed C-ABI interface so you can easily integrate with any other project in any other language. The steps bellow will provide a quick guide on how to build this for the platform you desire and how to use it in the c++ example provided.
+This is simple file watcher lib written in go with an exposed C-ABI so you can easily integrate with any other project in any other language. The steps bellow will provide a quick guide on how to build this for the platform you desire and how to use it in the c++ example provided.
 
 ## Building
 To build, just run the command:
