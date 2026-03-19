@@ -3,6 +3,7 @@ package main
 /*
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 typedef struct
 {
@@ -10,28 +11,33 @@ typedef struct
 	int32_t changeType;
 } FilesChangedMessage ;
 
-// Define your callback function pointer types here
-typedef void (*OnFileChangedCallback)(FilesChangedMessage* files, size_t count);
+typedef void (*OnFileChangedCallback)(FilesChangedMessage* changes, size_t count);
+
+static void gofwatcher_invoke_callback(OnFileChangedCallback callback, FilesChangedMessage* changes, size_t count) {
+	callback(changes, count);
+}
 */
 import "C"
 
 import (
-	"fmt"
 	"log"
 	"maps"
 	"os"
+	"regexp"
 	"runtime/cgo"
 	"strings"
 	"time"
+	"unsafe"
 )
 
 type FileWatcherContext struct {
 	Path               string
+	FileRegex          *regexp.Regexp
 	InteruptChannel    chan bool
 	FileChangeCallback C.OnFileChangedCallback
 }
 
-func getFilesRecursive(path string) map[string]int64 {
+func getFilesRecursive(path string, fileRegex *regexp.Regexp) map[string]int64 {
 	if path == "" {
 		return map[string]int64{}
 	}
@@ -48,18 +54,40 @@ func getFilesRecursive(path string) map[string]int64 {
 
 	for _, entry := range entries {
 		if entry.IsDir() {
-			maps.Copy(files, getFilesRecursive(path+"/"+entry.Name()))
+			maps.Copy(files, getFilesRecursive(path+"/"+entry.Name(), fileRegex))
 		} else {
 			fileInfo, err := entry.Info()
 
 			if err != nil {
 				log.Fatal(err)
 			}
-			files[path+"/"+entry.Name()] = fileInfo.ModTime().Unix()
+
+			if fileRegex == nil || fileRegex.MatchString(entry.Name()) {
+				files[path+"/"+entry.Name()] = fileInfo.ModTime().Unix()
+			}
 		}
 	}
 
 	return files
+}
+
+func createFilesChangedMessage(fileName string, changeType int32) C.FilesChangedMessage {
+	return C.FilesChangedMessage{
+		fileName:   C.CString(fileName),
+		changeType: C.int32_t(changeType),
+	}
+}
+
+func freeFilesChangedMessage(message *C.FilesChangedMessage) {
+	C.free(unsafe.Pointer(message.fileName))
+}
+
+func sliceToCArray(fileMessageSlice []C.FilesChangedMessage) unsafe.Pointer {
+	cArray := C.malloc(C.size_t(len(fileMessageSlice)) * C.size_t(unsafe.Sizeof(C.FilesChangedMessage{})))
+	// convert the C array to a Go Array so we can index it
+	tempSlice := (*[1<<30 - 1]C.FilesChangedMessage)(cArray)
+	copy(tempSlice[:], fileMessageSlice)
+	return cArray
 }
 
 func watch(context *FileWatcherContext) {
@@ -70,7 +98,7 @@ func watch(context *FileWatcherContext) {
 		case <-context.InteruptChannel:
 			return
 		default:
-			newFilesMap := getFilesRecursive(context.Path)
+			newFilesMap := getFilesRecursive(context.Path, context.FileRegex)
 
 			changes := make([]C.FilesChangedMessage, 0)
 
@@ -78,9 +106,9 @@ func watch(context *FileWatcherContext) {
 				oldLastMod, exists := filesMap[filePath]
 
 				if !exists {
-					changes = append(changes, C.FilesChangedMessage{})
+					changes = append(changes, createFilesChangedMessage(filePath, 0))
 				} else if oldLastMod != newLastMod {
-					fmt.Println("File modified: {}", filePath)
+					changes = append(changes, createFilesChangedMessage(filePath, 1))
 				}
 			}
 
@@ -88,8 +116,14 @@ func watch(context *FileWatcherContext) {
 				_, exists := newFilesMap[filePath]
 
 				if !exists {
-					fmt.Println("File deleted: {}", filePath)
+					changes = append(changes, createFilesChangedMessage(filePath, 2))
 				}
+			}
+
+			if len(changes) > 0 {
+				cArray := sliceToCArray(changes)
+				C.gofwatcher_invoke_callback(context.FileChangeCallback, (*C.FilesChangedMessage)(cArray), C.size_t(len(changes)))
+				C.free(cArray)
 			}
 
 			filesMap = newFilesMap
@@ -100,9 +134,23 @@ func watch(context *FileWatcherContext) {
 }
 
 //export gofwatcher_beginWatch
-func gofwatcher_beginWatch(path *C.char, fileChangeCallback C.OnFileChangedCallback) C.uintptr_t {
+func gofwatcher_beginWatch(path *C.char, fileChangeCallback C.OnFileChangedCallback, fileRegex *C.char) C.uintptr_t {
+
+	goFileRegexp := (*regexp.Regexp)(nil)
+
+	if fileRegex != nil {
+		innerGoFileRegex, err := regexp.Compile(C.GoString(fileRegex))
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		goFileRegexp = innerGoFileRegex
+	}
+
 	context := FileWatcherContext{
 		Path:               C.GoString(path),
+		FileRegex:          goFileRegexp,
 		InteruptChannel:    make(chan bool),
 		FileChangeCallback: fileChangeCallback,
 	}
