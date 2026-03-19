@@ -29,8 +29,12 @@ auto main(int argc, char **argv) -> int32_t {
   }
 
   char *path = argv[1];
+  char *fileRegex = nullptr;
+  if (argc > 2) {
+    fileRegex = argv[2];
+  }
 
-  uintptr_t contextHandle = gofwatcher_beginWatch(path, &callback);
+  uintptr_t contextHandle = gofwatcher_beginWatch(path, &callback, fileRegex);
 
   int stop;
   std::cin >> stop;
