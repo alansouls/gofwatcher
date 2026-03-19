@@ -4,16 +4,17 @@ package main
 #include <stdlib.h>
 #include <stdint.h>
 
-typedef struct FilesChangedMessage
+typedef struct
 {
 	char* fileName;
 	int32_t changeType;
-}
+} FilesChangedMessage ;
 
 // Define your callback function pointer types here
 typedef void (*OnFileChangedCallback)(FilesChangedMessage* files, size_t count);
 */
 import "C"
+
 import (
 	"fmt"
 	"log"
@@ -71,7 +72,7 @@ func watch(context *FileWatcherContext) {
 		default:
 			newFilesMap := getFilesRecursive(context.Path)
 
-			changes := make(C.FilesChangedMessage, 0)
+			changes := make([]C.FilesChangedMessage, 0)
 
 			for filePath, newLastMod := range newFilesMap {
 				oldLastMod, exists := filesMap[filePath]
@@ -98,8 +99,8 @@ func watch(context *FileWatcherContext) {
 	}
 }
 
-// export gofwatcher_beginWatch
-func beginWatch(path *C.char, fileChangeCallback C.OnFileChangedCallback) C.uintptr_t {
+//export gofwatcher_beginWatch
+func gofwatcher_beginWatch(path *C.char, fileChangeCallback C.OnFileChangedCallback) C.uintptr_t {
 	context := FileWatcherContext{
 		Path:               C.GoString(path),
 		InteruptChannel:    make(chan bool),
@@ -111,8 +112,8 @@ func beginWatch(path *C.char, fileChangeCallback C.OnFileChangedCallback) C.uint
 	return C.uintptr_t(handle)
 }
 
-// export gofwatcher_stopWatch
-func stopWatch(contextHandle C.uintptr_t) {
+//export gofwatcher_stopWatch
+func gofwatcher_stopWatch(contextHandle C.uintptr_t) {
 	goHandle := cgo.Handle(contextHandle)
 	defer goHandle.Delete()
 	context := goHandle.Value().(*FileWatcherContext)
